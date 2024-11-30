@@ -12,11 +12,25 @@ import path from "path";
 import os from 'os';
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import winston from 'winston';
+
+// Configure Winston logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'logs/filesystem.log', flags: 'a' })
+  ]
+});
+
 
 // Command line argument parsing
 const args = process.argv.slice(2);
 if (args.length === 0) {
-  console.error("Usage: mcp-server-filesystem <allowed-directory> [additional-directories...]");
+  logger.error("Usage: mcp-server-filesystem <allowed-directory> [additional-directories...]"); // Use logger
   process.exit(1);
 }
 
@@ -42,11 +56,12 @@ await Promise.all(args.map(async (dir) => {
   try {
     const stats = await fs.stat(dir);
     if (!stats.isDirectory()) {
-      console.error(`Error: ${dir} is not a directory`);
+      logger.error(`Error: ${dir} is not a directory`); // Use logger
       process.exit(1);
     }
+    logger.info(`Directory ${dir} is accessible.`); // Use logger
   } catch (error) {
-    console.error(`Error accessing directory ${dir}:`, error);
+    logger.error(`Error accessing directory ${dir}:`, error); // Use logger
     process.exit(1);
   }
 }));
@@ -63,6 +78,7 @@ async function validatePath(requestedPath: string): Promise<string> {
   // Check if path is within allowed directories
   const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(dir));
   if (!isAllowed) {
+    logger.error(`Access denied - path outside allowed directories: ${absolute} not in ${allowedDirectories.join(', ')}`); // Use logger
     throw new Error(`Access denied - path outside allowed directories: ${absolute} not in ${allowedDirectories.join(', ')}`);
   }
 
@@ -72,8 +88,10 @@ async function validatePath(requestedPath: string): Promise<string> {
     const normalizedReal = normalizePath(realPath);
     const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(dir));
     if (!isRealPathAllowed) {
+      logger.error("Access denied - symlink target outside allowed directories"); // Use logger
       throw new Error("Access denied - symlink target outside allowed directories");
     }
+    logger.info(`Validated path: ${realPath}`); // Use logger
     return realPath;
   } catch (error) {
     // For new files that don't exist yet, verify parent directory
@@ -83,10 +101,13 @@ async function validatePath(requestedPath: string): Promise<string> {
       const normalizedParent = normalizePath(realParentPath);
       const isParentAllowed = allowedDirectories.some(dir => normalizedParent.startsWith(dir));
       if (!isParentAllowed) {
+        logger.error("Access denied - parent directory outside allowed directories"); // Use logger
         throw new Error("Access denied - parent directory outside allowed directories");
       }
+      logger.info(`Validated parent directory: ${realParentPath}`); // Use logger
       return absolute;
     } catch {
+      logger.error(`Parent directory does not exist: ${parentDir}`); // Use logger
       throw new Error(`Parent directory does not exist: ${parentDir}`);
     }
   }
@@ -156,6 +177,7 @@ const server = new Server(
 
 // Tool implementations
 async function getFileStats(filePath: string): Promise<FileInfo> {
+  logger.info(`Getting file stats for: ${filePath}`); // Use logger
   const stats = await fs.stat(filePath);
   return {
     size: stats.size,
@@ -172,6 +194,7 @@ async function searchFiles(
   rootPath: string,
   pattern: string,
 ): Promise<string[]> {
+  logger.info(`Searching files in ${rootPath} with pattern: ${pattern}`); // Use logger
   const results: string[] = [];
 
   async function search(currentPath: string) {
@@ -193,6 +216,7 @@ async function searchFiles(
         }
       } catch (error) {
         // Skip invalid paths during search
+        logger.error(`Error during search: ${error}`); // Use logger
         continue;
       }
     }
@@ -204,6 +228,7 @@ async function searchFiles(
 
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
+  logger.info("Listing available tools"); // Use logger
   return {
     tools: [
       {
@@ -296,6 +321,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  logger.info(`Received tool call: ${JSON.stringify(request.params)}`); // Use logger
   try {
     const { name, arguments: args } = request.params;
 
@@ -303,10 +329,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for read_file: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
         const content = await fs.readFile(validPath, "utf-8");
+        logger.info(`Successfully read file: ${validPath}`); // Use logger
         return {
           content: [{ type: "text", text: content }],
         };
@@ -315,6 +343,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "read_multiple_files": {
         const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for read_multiple_files: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
         }
         const results = await Promise.all(
@@ -322,8 +351,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
               const validPath = await validatePath(filePath);
               const content = await fs.readFile(validPath, "utf-8");
+              logger.info(`Successfully read file: ${validPath}`); // Use logger
               return `${filePath}:\n${content}\n`;
             } catch (error) {
+              logger.error(`Error reading file ${filePath}: ${error}`); // Use logger
               const errorMessage = error instanceof Error ? error.message : String(error);
               return `${filePath}: Error - ${errorMessage}`;
             }
@@ -337,10 +368,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "write_file": {
         const parsed = WriteFileArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for write_file: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
         await fs.writeFile(validPath, parsed.data.content, "utf-8");
+        logger.info(`Successfully wrote to file: ${validPath}`); // Use logger
         return {
           content: [{ type: "text", text: `Successfully wrote to ${parsed.data.path}` }],
         };
@@ -349,6 +382,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "create_directory": {
         const parsed = CreateDirectoryArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for create_directory: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
@@ -361,6 +395,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "list_directory": {
         const parsed = ListDirectoryArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for list_directory: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
@@ -376,6 +411,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "move_file": {
         const parsed = MoveFileArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for move_file: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for move_file: ${parsed.error}`);
         }
         const validSourcePath = await validatePath(parsed.data.source);
@@ -389,6 +425,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "search_files": {
         const parsed = SearchFilesArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for search_files: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
@@ -401,6 +438,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "get_file_info": {
         const parsed = GetFileInfoArgsSchema.safeParse(args);
         if (!parsed.success) {
+          logger.error(`Invalid arguments for get_file_info: ${parsed.error}`); // Use logger
           throw new Error(`Invalid arguments for get_file_info: ${parsed.error}`);
         }
         const validPath = await validatePath(parsed.data.path);
@@ -422,6 +460,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       default:
+        logger.error(`Unknown tool: ${name}`); // Use logger
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
@@ -437,11 +476,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  logger.error("Secure MCP Filesystem Server running on stdio");
+  logger.error("Allowed directories:"+ JSON.stringify(allowedDirectories));
   console.error("Secure MCP Filesystem Server running on stdio");
   console.error("Allowed directories:", allowedDirectories);
 }
 
 runServer().catch((error) => {
+  logger.error("Fatal error running server:"+ error.message);
   console.error("Fatal error running server:", error);
   process.exit(1);
 });
