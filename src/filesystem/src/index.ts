@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -13,6 +12,23 @@ import os from 'os';
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import winston from 'winston';
+import {
+  readFile,
+  readMultipleFiles,
+  writeFile,
+  createDirectory,
+  listDirectory,
+  moveFile,
+  getFileInfo,
+  copyToNewFile,
+  cutToNewFile,
+  appendToFile,
+  insertAtPosition,
+  deleteRange,
+  replaceBlock,
+  replaceByPattern,
+  searchFiles
+} from './operations/index.js';
 
 // Configure Winston logger
 const logger = winston.createLogger({
@@ -255,42 +271,6 @@ async function getFileStats(filePath: string): Promise<FileInfo> {
   };
 }
 
-async function searchFiles(
-  rootPath: string,
-  pattern: string,
-): Promise<string[]> {
-  logger.info(`Searching files in ${rootPath} with pattern: ${pattern}`); // Use logger
-  const results: string[] = [];
-
-  async function search(currentPath: string) {
-    const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(currentPath, entry.name);
-      
-      try {
-        // Validate each path before processing
-        await validatePath(fullPath);
-
-        if (entry.name.toLowerCase().includes(pattern.toLowerCase())) {
-          results.push(fullPath);
-        }
-
-        if (entry.isDirectory()) {
-          await search(fullPath);
-        }
-      } catch (error) {
-        // Skip invalid paths during search
-        logger.error(`Error during search: ${error}`); // Use logger
-        continue;
-      }
-    }
-  }
-
-  await search(rootPath);
-  return results;
-}
-
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -456,280 +436,66 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  logger.info(`Received tool call: ${JSON.stringify(request.params)}`); // Use logger
+  logger.info(`Received tool call: ${JSON.stringify(request.params)}`);
   try {
     const { name, arguments: args } = request.params;
 
     switch (name) {
-      case "read_file": {
-        const parsed = ReadFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for read_file: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, "utf-8");
-        logger.info(`Successfully read file: ${validPath}`); // Use logger
-        return {
-          content: [{ type: "text", text: content }],
-        };
-      }
+      case "read_file":
+        return await readFile(args, allowedDirectories);
 
-      case "read_multiple_files": {
-        const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for read_multiple_files: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
-        }
-        const results = await Promise.all(
-          parsed.data.paths.map(async (filePath: string) => {
-            try {
-              const validPath = await validatePath(filePath);
-              const content = await fs.readFile(validPath, "utf-8");
-              logger.info(`Successfully read file: ${validPath}`); // Use logger
-              return `${filePath}:\n${content}\n`;
-            } catch (error) {
-              logger.error(`Error reading file ${filePath}: ${error}`); // Use logger
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              return `${filePath}: Error - ${errorMessage}`;
-            }
-          }),
-        );
-        return {
-          content: [{ type: "text", text: results.join("\n---\n") }],
-        };
-      }
+      case "read_multiple_files":
+        return await readMultipleFiles(args, allowedDirectories);
 
-      case "write_file": {
-        const parsed = WriteFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for write_file: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.writeFile(validPath, parsed.data.content, "utf-8");
-        logger.info(`Successfully wrote to file: ${validPath}`); // Use logger
-        return {
-          content: [{ type: "text", text: `Successfully wrote to ${parsed.data.path}` }],
-        };
-      }
+      case "write_file":
+        return await writeFile(args, allowedDirectories);
 
-      case "create_directory": {
-        const parsed = CreateDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for create_directory: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.mkdir(validPath, { recursive: true });
-        return {
-          content: [{ type: "text", text: `Successfully created directory ${parsed.data.path}` }],
-        };
-      }
+      case "create_directory":
+        return await createDirectory(args, allowedDirectories);
 
-      case "list_directory": {
-        const parsed = ListDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for list_directory: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const entries = await fs.readdir(validPath, { withFileTypes: true });
-        const formatted = entries
-          .map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`)
-          .join("\n");
-        return {
-          content: [{ type: "text", text: formatted }],
-        };
-      }
+      case "list_directory":
+        return await listDirectory(args, allowedDirectories);
 
-      case "move_file": {
-        const parsed = MoveFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for move_file: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for move_file: ${parsed.error}`);
-        }
-        const validSourcePath = await validatePath(parsed.data.source);
-        const validDestPath = await validatePath(parsed.data.destination);
-        await fs.rename(validSourcePath, validDestPath);
-        return {
-          content: [{ type: "text", text: `Successfully moved ${parsed.data.source} to ${parsed.data.destination}` }],
-        };
-      }
+      case "move_file":
+        return await moveFile(args, allowedDirectories);
 
-      case "search_files": {
-        const parsed = SearchFilesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for search_files: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const results = await searchFiles(validPath, parsed.data.pattern);
-        return {
-          content: [{ type: "text", text: results.length > 0 ? results.join("\n") : "No matches found" }],
-        };
-      }
+      case "search_files":
+        return await searchFiles(args, allowedDirectories);
 
-      case "get_file_info": {
-        const parsed = GetFileInfoArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          logger.error(`Invalid arguments for get_file_info: ${parsed.error}`); // Use logger
-          throw new Error(`Invalid arguments for get_file_info: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const info = await getFileStats(validPath);
-        return {
-          content: [{ type: "text", text: Object.entries(info)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join("\n") }],
-        };
-      }
+      case "get_file_info":
+        return await getFileInfo(args, allowedDirectories);
 
-      case "list_allowed_directories": {
+      case "list_allowed_directories":
         return {
           content: [{ 
             type: "text", 
             text: `Allowed directories:\n${allowedDirectories.join('\n')}` 
           }],
         };
-      }
 
-      case "copy_to_new_file": {
-        const parsed = CopyToNewFileSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validSourcePath = await validatePath(parsed.data.sourcePath);
-        const validTargetPath = await validatePath(parsed.data.targetPath);
-        
-        const content = await fs.readFile(validSourcePath, 'utf-8');
-        const range = await findRange(content, parsed.data.range);
-        if (!range) throw new Error('Range not found in source file');
-        
-        const extractedContent = content.substring(range[0], range[1]);
-        await fs.writeFile(validTargetPath, extractedContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully copied content to ${parsed.data.targetPath}` }]
-        };
-      }
+      case "copy_to_new_file":
+        return await copyToNewFile(args, allowedDirectories);
       
-      case "cut_to_new_file": {
-        const parsed = CutToNewFileSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validSourcePath = await validatePath(parsed.data.sourcePath);
-        const validTargetPath = await validatePath(parsed.data.targetPath);
-        
-        const content = await fs.readFile(validSourcePath, 'utf-8');
-        const range = await findRange(content, parsed.data.range);
-        if (!range) throw new Error('Range not found in source file');
-        
-        const extractedContent = content.substring(range[0], range[1]);
-        const newContent = content.substring(0, range[0]) + content.substring(range[1]);
-        
-        await fs.writeFile(validTargetPath, extractedContent, 'utf-8');
-        await fs.writeFile(validSourcePath, newContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully moved content to ${parsed.data.targetPath}` }]
-        };
-      }
+      case "cut_to_new_file":
+        return await cutToNewFile(args, allowedDirectories);
       
-      case "append_to_file": {
-        const parsed = AppendToFileSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validSourcePath = await validatePath(parsed.data.sourcePath);
-        const validTargetPath = await validatePath(parsed.data.targetPath);
-        
-        const content = await fs.readFile(validSourcePath, 'utf-8');
-        const range = await findRange(content, parsed.data.range);
-        if (!range) throw new Error('Range not found in source file');
-        
-        const extractedContent = content.substring(range[0], range[1]);
-        await fs.appendFile(validTargetPath, extractedContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully appended content to ${parsed.data.targetPath}` }]
-        };
-      }
+      case "append_to_file":
+        return await appendToFile(args, allowedDirectories);
       
-      case "insert_at_position": {
-        const parsed = InsertAtPositionSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, 'utf-8');
-        const position = await findRange(content, parsed.data.position);
-        if (!position) throw new Error('Insert position not found');
-        
-        const newContent = content.substring(0, position[0]) + 
-                          parsed.data.content + 
-                          content.substring(position[0]);
-        
-        await fs.writeFile(validPath, newContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully inserted content in ${parsed.data.path}` }]
-        };
-      }
+      case "insert_at_position":
+        return await insertAtPosition(args, allowedDirectories);
       
-      case "delete_range": {
-        const parsed = DeleteRangeSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, 'utf-8');
-        const range = await findRange(content, parsed.data.range);
-        if (!range) throw new Error('Range not found');
-        
-        const newContent = content.substring(0, range[0]) + content.substring(range[1]);
-        await fs.writeFile(validPath, newContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully deleted content from ${parsed.data.path}` }]
-        };
-      }
+      case "delete_range":
+        return await deleteRange(args, allowedDirectories);
       
-      case "replace_block": {
-        const parsed = ReplaceBlockSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, 'utf-8');
-        const range = await findRange(content, parsed.data.range);
-        if (!range) throw new Error('Range not found');
-        
-        const newContent = content.substring(0, range[0]) + 
-                          parsed.data.content + 
-                          content.substring(range[1]);
-        
-        await fs.writeFile(validPath, newContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully replaced content in ${parsed.data.path}` }]
-        };
-      }
+      case "replace_block":
+        return await replaceBlock(args, allowedDirectories);
       
-      case "replace_by_pattern": {
-        const parsed = ReplaceByPatternSchema.safeParse(args);
-        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
-        
-        const validPath = await validatePath(parsed.data.path);
-        const content = await fs.readFile(validPath, 'utf-8');
-        
-        const regex = new RegExp(parsed.data.pattern, parsed.data.flags);
-        const newContent = content.replace(regex, parsed.data.replacement);
-        
-        await fs.writeFile(validPath, newContent, 'utf-8');
-        
-        return {
-          content: [{ type: "text", text: `Successfully replaced content in ${parsed.data.path}` }]
-        };
-      }
+      case "replace_by_pattern":
+        return await replaceByPattern(args, allowedDirectories);
 
       default:
-        logger.error(`Unknown tool: ${name}`); // Use logger
+        logger.error(`Unknown tool: ${name}`);
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
@@ -739,21 +505,5 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
-
-// Start server
-async function runServer() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  logger.info("Secure MCP Filesystem Server running on stdio");
-  logger.info("Allowed directories:"+ JSON.stringify(allowedDirectories));
-  console.error("Secure MCP Filesystem Server running on stdio");
-  console.error("Allowed directories:", allowedDirectories);
-}
-
-runServer().catch((error) => {
-  logger.error("Fatal error running server:"+ error.message);
-  console.error("Fatal error running server:", error);
-  process.exit(1);
 });
 
