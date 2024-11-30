@@ -358,11 +358,20 @@ export const CreateBranchSchema = RepoParamsSchema.extend({
     .describe("Optional: source branch to create from (defaults to the repository's default branch)")
 });
 
+// New schema for git command
+export const RunGitCommandSchema = z.object({
+  cwd: z.string().describe("Working directory where to run the git command"),
+  command: z.string().describe("Git command to run (e.g., 'clone', 'pull', 'push')"),
+  args: z.array(z.string()).describe("Command arguments"),
+  env: z.record(z.string()).optional().describe("Additional environment variables")
+});
+
 // Export types
 export type GitHubAuthor = z.infer<typeof GitHubAuthorSchema>;
 export type GitHubFork = z.infer<typeof GitHubForkSchema>;
 export type GitHubIssue = z.infer<typeof GitHubIssueSchema>;
-export type GitHubPullRequest = z.infer<typeof GitHubPullRequestSchema>;export type GitHubRepository = z.infer<typeof GitHubRepositorySchema>;
+export type GitHubPullRequest = z.infer<typeof GitHubPullRequestSchema>;
+export type GitHubRepository = z.infer<typeof GitHubRepositorySchema>;
 export type GitHubFileContent = z.infer<typeof GitHubFileContentSchema>;
 export type GitHubDirectoryContent = z.infer<typeof GitHubDirectoryContentSchema>;
 export type GitHubContent = z.infer<typeof GitHubContentSchema>;
@@ -376,3 +385,4 @@ export type CreatePullRequestOptions = z.infer<typeof CreatePullRequestOptionsSc
 export type CreateBranchOptions = z.infer<typeof CreateBranchOptionsSchema>;
 export type GitHubCreateUpdateFileResponse = z.infer<typeof GitHubCreateUpdateFileResponseSchema>;
 export type GitHubSearchResponse = z.infer<typeof GitHubSearchResponseSchema>;
+export type RunGitCommand = z.infer<typeof RunGitCommandSchema>;
