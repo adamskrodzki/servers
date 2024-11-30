@@ -22,7 +22,7 @@ const logger = winston.createLogger({
     winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
   ),
   transports: [
-    new winston.transports.File({ dirname:'logs',  filename: 'logs/filesystem.log' })
+    new winston.transports.File({ dirname:'logs',  filename: 'filesystem.log' })
   ]
 });
 
@@ -33,6 +33,22 @@ if (args.length === 0) {
   logger.error("Usage: mcp-server-filesystem <allowed-directory> [additional-directories...]"); // Use logger
   process.exit(1);
 }
+
+async function findRange(content: string, range: z.infer<typeof TextRangeSchema>): Promise<[number, number] | null> {
+  const fullPattern = escapeRegExp(range.beforeText) + '(.*?)' + escapeRegExp(range.afterText);
+  const regex = new RegExp(fullPattern, 's');
+  const match = content.match(regex);
+  if (!match) return null;
+  return [
+    match.index! + range.beforeText.length,
+    match.index! + match[0].length - range.afterText.length
+  ];
+}
+
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
@@ -114,6 +130,55 @@ async function validatePath(requestedPath: string): Promise<string> {
 }
 
 // Schema definitions
+
+const TextRangeSchema = z.object({
+  beforeText: z.string().describe("Text that appears before the target range"),
+  afterText: z.string().describe("Text that appears after the target range")
+});
+
+const CopyToNewFileSchema = z.object({
+  sourcePath: z.string().describe("Path to the source file containing text to copy"),
+  range: TextRangeSchema,
+  targetPath: z.string().describe("Path where the new file will be created")
+});
+
+const CutToNewFileSchema = z.object({
+  sourcePath: z.string().describe("Path to the source file containing text to move"),
+  range: TextRangeSchema,
+  targetPath: z.string().describe("Path where the new file will be created")
+});
+
+const AppendToFileSchema = z.object({
+  sourcePath: z.string().describe("Path to the source file containing text to append"),
+  range: TextRangeSchema,
+  targetPath: z.string().describe("Path to the file where content will be appended")
+});
+
+const InsertAtPositionSchema = z.object({
+  path: z.string().describe("Path to the file where content will be inserted"),
+  position: TextRangeSchema,
+  content: z.string().describe("Text content to insert")
+});
+
+const DeleteRangeSchema = z.object({
+  path: z.string().describe("Path to the file where content will be deleted"),
+  range: TextRangeSchema
+});
+
+const ReplaceBlockSchema = z.object({
+  path: z.string().describe("Path to the file where content will be replaced"),
+  range: TextRangeSchema,
+  content: z.string().describe("New text content to replace the matched range")
+});
+
+const ReplaceByPatternSchema = z.object({
+  path: z.string().describe("Path to the file where content will be replaced"),
+  pattern: z.string().describe("Regular expression pattern to match"),
+  flags: z.string().optional().describe("Regular expression flags"),
+  replacement: z.string().describe("Replacement text (can include regex capture groups)")
+});
+
+
 const ReadFileArgsSchema = z.object({
   path: z.string(),
 });
@@ -459,6 +524,140 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "copy_to_new_file": {
+        const parsed = CopyToNewFileSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validSourcePath = await validatePath(parsed.data.sourcePath);
+        const validTargetPath = await validatePath(parsed.data.targetPath);
+        
+        const content = await fs.readFile(validSourcePath, 'utf-8');
+        const range = await findRange(content, parsed.data.range);
+        if (!range) throw new Error('Range not found in source file');
+        
+        const extractedContent = content.substring(range[0], range[1]);
+        await fs.writeFile(validTargetPath, extractedContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully copied content to ${parsed.data.targetPath}` }]
+        };
+      }
+      
+      case "cut_to_new_file": {
+        const parsed = CutToNewFileSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validSourcePath = await validatePath(parsed.data.sourcePath);
+        const validTargetPath = await validatePath(parsed.data.targetPath);
+        
+        const content = await fs.readFile(validSourcePath, 'utf-8');
+        const range = await findRange(content, parsed.data.range);
+        if (!range) throw new Error('Range not found in source file');
+        
+        const extractedContent = content.substring(range[0], range[1]);
+        const newContent = content.substring(0, range[0]) + content.substring(range[1]);
+        
+        await fs.writeFile(validTargetPath, extractedContent, 'utf-8');
+        await fs.writeFile(validSourcePath, newContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully moved content to ${parsed.data.targetPath}` }]
+        };
+      }
+      
+      case "append_to_file": {
+        const parsed = AppendToFileSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validSourcePath = await validatePath(parsed.data.sourcePath);
+        const validTargetPath = await validatePath(parsed.data.targetPath);
+        
+        const content = await fs.readFile(validSourcePath, 'utf-8');
+        const range = await findRange(content, parsed.data.range);
+        if (!range) throw new Error('Range not found in source file');
+        
+        const extractedContent = content.substring(range[0], range[1]);
+        await fs.appendFile(validTargetPath, extractedContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully appended content to ${parsed.data.targetPath}` }]
+        };
+      }
+      
+      case "insert_at_position": {
+        const parsed = InsertAtPositionSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validPath = await validatePath(parsed.data.path);
+        const content = await fs.readFile(validPath, 'utf-8');
+        const position = await findRange(content, parsed.data.position);
+        if (!position) throw new Error('Insert position not found');
+        
+        const newContent = content.substring(0, position[0]) + 
+                          parsed.data.content + 
+                          content.substring(position[0]);
+        
+        await fs.writeFile(validPath, newContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully inserted content in ${parsed.data.path}` }]
+        };
+      }
+      
+      case "delete_range": {
+        const parsed = DeleteRangeSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validPath = await validatePath(parsed.data.path);
+        const content = await fs.readFile(validPath, 'utf-8');
+        const range = await findRange(content, parsed.data.range);
+        if (!range) throw new Error('Range not found');
+        
+        const newContent = content.substring(0, range[0]) + content.substring(range[1]);
+        await fs.writeFile(validPath, newContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully deleted content from ${parsed.data.path}` }]
+        };
+      }
+      
+      case "replace_block": {
+        const parsed = ReplaceBlockSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validPath = await validatePath(parsed.data.path);
+        const content = await fs.readFile(validPath, 'utf-8');
+        const range = await findRange(content, parsed.data.range);
+        if (!range) throw new Error('Range not found');
+        
+        const newContent = content.substring(0, range[0]) + 
+                          parsed.data.content + 
+                          content.substring(range[1]);
+        
+        await fs.writeFile(validPath, newContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully replaced content in ${parsed.data.path}` }]
+        };
+      }
+      
+      case "replace_by_pattern": {
+        const parsed = ReplaceByPatternSchema.safeParse(args);
+        if (!parsed.success) throw new Error(`Invalid arguments: ${parsed.error}`);
+        
+        const validPath = await validatePath(parsed.data.path);
+        const content = await fs.readFile(validPath, 'utf-8');
+        
+        const regex = new RegExp(parsed.data.pattern, parsed.data.flags);
+        const newContent = content.replace(regex, parsed.data.replacement);
+        
+        await fs.writeFile(validPath, newContent, 'utf-8');
+        
+        return {
+          content: [{ type: "text", text: `Successfully replaced content in ${parsed.data.path}` }]
+        };
+      }
+
       default:
         logger.error(`Unknown tool: ${name}`); // Use logger
         throw new Error(`Unknown tool: ${name}`);
@@ -476,8 +675,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.error("Secure MCP Filesystem Server running on stdio");
-  logger.error("Allowed directories:"+ JSON.stringify(allowedDirectories));
+  logger.info("Secure MCP Filesystem Server running on stdio");
+  logger.info("Allowed directories:"+ JSON.stringify(allowedDirectories));
   console.error("Secure MCP Filesystem Server running on stdio");
   console.error("Allowed directories:", allowedDirectories);
 }
@@ -487,3 +686,4 @@ runServer().catch((error) => {
   console.error("Fatal error running server:", error);
   process.exit(1);
 });
+
