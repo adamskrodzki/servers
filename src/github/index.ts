@@ -467,6 +467,48 @@ async function createRepository(
   return GitHubRepositorySchema.parse(await response.json());
 }
 
+async function cloneRepository(
+  owner: string,
+  repo: string,
+  path: string,
+  branch?: string,
+  depth?: number
+): Promise<GitHubRepository> {
+  const url = `https://api.github.com/repos/${owner}/${repo}`;
+  const response = await fetch(url, {
+    headers: {
+      "Authorization": `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+      "Accept": "application/vnd.github.v3+json",
+      "User-Agent": "github-mcp-server"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.statusText}`);
+  }
+
+  const repository = GitHubRepositorySchema.parse(await response.json());
+
+  const cloneUrl = repository.clone_url;
+  const branchArg = branch ? `--branch ${branch}` : '';
+  const depthArg = depth ? `--depth ${depth}` : '';
+
+  const command = `git clone ${cloneUrl} ${branchArg} ${depthArg} ${path}`;
+
+  const { exec } = require('child_process');
+  await new Promise((resolve, reject) => {
+    exec(command, (error: Error | null, stdout: string, stderr: string) => {
+      if (error) {
+        reject(new Error(`Failed to clone repository: ${error.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+
+  return repository;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -514,6 +556,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "create_branch",
         description: "Create a new branch in a GitHub repository",
         inputSchema: zodToJsonSchema(CreateBranchSchema)
+      },
+      {
+        name: "clone_repository",
+        description: "Clone a GitHub repository to a specified path",
+        inputSchema: zodToJsonSchema(z.object({
+          owner: z.string().describe("Repository owner (username or organization)"),
+          repo: z.string().describe("Repository name"),
+          path: z.string().describe("Path where to clone the repository"),
+          branch: z.string().optional().describe("Branch to clone (default to the repository's default branch)"),
+          depth: z.number().optional().describe("Depth of the clone (for shallow clones)")
+        }))
       }
     ]
   };
@@ -621,6 +674,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { owner, repo, ...options } = args;
         const pullRequest = await createPullRequest(owner, repo, options);
         return { toolResult: pullRequest };
+      }
+
+      case "clone_repository": {
+        const args = z.object({
+          owner: z.string(),
+          repo: z.string(),
+          path: z.string(),
+          branch: z.string().optional(),
+          depth: z.number().optional()
+        }).parse(request.params.arguments);
+        const repository = await cloneRepository(args.owner, args.repo, args.path, args.branch, args.depth);
+        return { toolResult: repository };
       }
 
       default:
