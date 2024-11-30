@@ -562,7 +562,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "create_repository",
         description: "Create a new GitHub repository in your account",
         inputSchema: zodToJsonSchema(CreateRepositorySchema)
-      },
+      },/*
       {
         name: "get_file_contents",
         description: "Get the contents of a file or directory from a GitHub repository",
@@ -572,7 +572,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "push_files",
         description: "Push multiple files to a GitHub repository in a single commit",
         inputSchema: zodToJsonSchema(PushFilesSchema)
-      },
+      },*/
       {
         name: "create_issue",
         description: "Create a new issue in a GitHub repository",
@@ -587,12 +587,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "fork_repository",
         description: "Fork a GitHub repository to your account or specified organization",
         inputSchema: zodToJsonSchema(ForkRepositorySchema)
-      },
+      },/*
       {
         name: "create_branch",
         description: "Create a new branch in a GitHub repository",
         inputSchema: zodToJsonSchema(CreateBranchSchema)
-      },
+      },*/
       {
         name: "clone_repository",
         description: "Clone a GitHub repository to a specified path",
