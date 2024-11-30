@@ -22,7 +22,7 @@ const logger = winston.createLogger({
     winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
   ),
   transports: [
-    new winston.transports.File({ filename: 'logs/filesystem.log', flags: 'a' })
+    new winston.transports.File({ dirname:'logs',  filename: 'logs/filesystem.log' })
   ]
 });
 
