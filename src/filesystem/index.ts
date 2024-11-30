@@ -293,7 +293,6 @@ async function searchFiles(
 
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  logger.info("Listing available tools"); // Use logger
   return {
     tools: [
       {
@@ -380,10 +379,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: [],
         },
       },
+      {
+        name: "copy_to_new_file",
+        description:
+          "Copy a section of text from a source file to a new file. The section is identified " +
+          "by surrounding text markers (beforeText and afterText). The operation preserves the " +
+          "extracted content exactly as it appears in the source, including whitespace and line endings. " +
+          "Creates the target file if it doesn't exist, fails if target exists. Particularly useful " +
+          "for extracting specific sections like function definitions, configuration blocks, or " +
+          "documentation segments. Only works within allowed directories.",
+        inputSchema: zodToJsonSchema(CopyToNewFileSchema) as ToolInput,
+      },
+      {
+        name: "cut_to_new_file",
+        description:
+          "Move a section of text from source file to a new file, removing it from the source. " +
+          "The section is identified using surrounding text markers. This operation maintains " +
+          "atomicity - either both the extraction and removal succeed, or neither does. Useful for " +
+          "refactoring code, splitting files, or moving content between files while preserving the " +
+          "exact formatting. Creates target file if needed, fails if target exists. Both files must " +
+          "be within allowed directories.",
+        inputSchema: zodToJsonSchema(CutToNewFileSchema) as ToolInput,
+      },
+      {
+        name: "append_to_file",
+        description:
+          "Extract text from source file using markers and append it to an existing target file. " +
+          "The operation preserves all formatting and adds the content at the end of the target file " +
+          "without modification. Source content remains unchanged. Particularly useful for collecting " +
+          "related content from multiple files, building logs, or concatenating file segments. Both " +
+          "files must be within allowed directories. Creates target if it doesn't exist.",
+        inputSchema: zodToJsonSchema(AppendToFileSchema) as ToolInput,
+      },
+      {
+        name: "insert_at_position",
+        description:
+          "Insert new content at a specific position in a file, identified by surrounding text markers. " +
+          "The position is determined by text that comes before and after the desired insertion point. " +
+          "Maintains file integrity by ensuring precise positioning. Useful for adding new entries to " +
+          "lists, injecting code snippets, or updating configuration files. Fails if position markers " +
+          "aren't found or are ambiguous. Only works within allowed directories.",
+        inputSchema: zodToJsonSchema(InsertAtPositionSchema) as ToolInput,
+      },
+      {
+        name: "delete_range",
+        description:
+          "Remove a section of text from a file, identified by surrounding text markers. The operation " +
+          "preserves file integrity and handles whitespace carefully to prevent unintended formatting " +
+          "issues. Perfect for cleaning up files, removing deprecated code, or editing configuration. " +
+          "The beforeText and afterText markers must uniquely identify the range to be deleted. Only " +
+          "works within allowed directories. Operation is atomic - either succeeds completely or fails.",
+        inputSchema: zodToJsonSchema(DeleteRangeSchema) as ToolInput,
+      },
+      {
+        name: "replace_block",
+        description:
+          "Replace a block of text identified by surrounding markers with new content. Maintains file " +
+          "formatting and structure while performing the replacement. Ideal for updating version numbers, " +
+          "changing configuration values, or modifying code blocks. The operation is atomic and validates " +
+          "the uniqueness of markers before making changes. Ensures file integrity throughout the " +
+          "operation. Only works within allowed directories.",
+        inputSchema: zodToJsonSchema(ReplaceBlockSchema) as ToolInput,
+      },
+      {
+        name: "replace_by_pattern",
+        description:
+          "Replace text matching a regular expression pattern with new content. Supports regex flags " +
+          "for case sensitivity, multiline matching, etc. The replacement text can include captured " +
+          "groups using standard regex replacement syntax ($1, $2, etc.). Powerful for batch updates, " +
+          "format standardization, or complex text transformations. Exercise caution with global flags " +
+          "as they affect all matches. Only works within allowed directories.",
+        inputSchema: zodToJsonSchema(ReplaceByPatternSchema) as ToolInput,
+      },
     ],
   };
-});
-
+ });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   logger.info(`Received tool call: ${JSON.stringify(request.params)}`); // Use logger
