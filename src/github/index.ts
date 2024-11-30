@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
+import { exec } from "child_process"
 import {
   GitHubForkSchema,
   GitHubReferenceSchema,
@@ -41,7 +42,8 @@ import {
   CreateIssueSchema,
   CreatePullRequestSchema,
   ForkRepositorySchema,
-  CreateBranchSchema
+  CreateBranchSchema,
+  RunGitCommandSchema
 } from './schemas.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -61,6 +63,35 @@ if (!GITHUB_PERSONAL_ACCESS_TOKEN) {
   console.error("GITHUB_PERSONAL_ACCESS_TOKEN environment variable is not set");
   process.exit(1);
 }
+
+
+async function runGitCommand(
+  cwd: string,
+  command: string,
+  args: string[],
+  env?: Record<string, string>
+): Promise<string> {
+  const gitCommand = `git ${command} ${args.join(' ')}`;
+  
+  return new Promise((resolve, reject) => {
+    exec(gitCommand, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0', // Disable git credential prompts
+        ...env
+      }
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`Git command failed: ${error.message}\
+${stderr}`));
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
 
 async function forkRepository(
   owner: string,
@@ -518,6 +549,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(CreateOrUpdateFileSchema)
       },
       {
+        name: "run_git_command",
+        description: "Run an arbitrary git command in a specified directory",
+        inputSchema: zodToJsonSchema(RunGitCommandSchema)
+      },
+      {
         name: "search_repositories",
         description: "Search for GitHub repositories",
         inputSchema: zodToJsonSchema(SearchRepositoriesSchema)
@@ -579,6 +615,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     switch (request.params.name) {
+      case "run_git_command": {
+        const args = RunGitCommandSchema.parse(request.params.arguments);
+        const result = await runGitCommand(args.cwd, args.command, args.args, args.env);
+        return { toolResult: { output: result } };
+      }
+
       case "fork_repository": {
         const args = ForkRepositorySchema.parse(request.params.arguments);
         const fork = await forkRepository(args.owner, args.repo, args.organization);
@@ -649,6 +691,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         return { toolResult: result };
       }
+
+      
 
       case "push_files": {
         const args = PushFilesSchema.parse(request.params.arguments);
