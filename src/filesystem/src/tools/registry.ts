@@ -1,6 +1,12 @@
 import { ToolDefinition } from "./types.js";
 import { readFileToolDefinition } from "./descriptions/read_file.js";
-import { readFile } from "../operations/index.js";
+import { readMultipleFilesToolDefinition } from "./descriptions/read_multiple_files.js";
+import { writeFileToolDefinition } from "./descriptions/write_file.js";
+import { 
+  readFile,
+  readMultipleFiles,
+  writeFile
+} from "../operations/index.js";
 
 class ToolRegistry {
   private tools: Map<string, ToolDefinition> = new Map();
@@ -28,8 +34,20 @@ class ToolRegistry {
 
 export const registry = new ToolRegistry();
 
-// Register tools
-registry.register(readFileToolDefinition);
+// Register all tools
+[
+  readFileToolDefinition,
+  readMultipleFilesToolDefinition,
+  writeFileToolDefinition
+].forEach(tool => registry.register(tool));
 
-// Register handlers
-registry.registerHandler("read_file", readFile);
+// Register all handlers
+const handlers = {
+  read_file: readFile,
+  read_multiple_files: readMultipleFiles,
+  write_file: writeFile
+};
+
+Object.entries(handlers).forEach(([name, handler]) => {
+  registry.registerHandler(name, handler);
+});
