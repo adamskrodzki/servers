@@ -29,6 +29,8 @@ import {
   replaceByPattern,
   searchFiles
 } from './operations/index.js';
+import { AppendToFileSchema, CopyToNewFileSchema, CreateDirectoryArgsSchema, CutToNewFileSchema, DeleteRangeSchema, GetFileInfoArgsSchema, InsertAtPositionSchema, ListDirectoryArgsSchema, MoveFileArgsSchema, ReadFileArgsSchema, ReadMultipleFilesArgsSchema, ReplaceBlockSchema, ReplaceByPatternSchema, SearchFilesArgsSchema, TextRangeSchema, WriteFileArgsSchema } from "./schemas.js";
+import { normalizePath, expandHome } from "./utils.js";
 
 // Configure Winston logger
 const logger = winston.createLogger({
@@ -50,34 +52,6 @@ if (args.length === 0) {
   process.exit(1);
 }
 
-async function findRange(content: string, range: z.infer<typeof TextRangeSchema>): Promise<[number, number] | null> {
-  const fullPattern = escapeRegExp(range.beforeText) + '(.*?)' + escapeRegExp(range.afterText);
-  const regex = new RegExp(fullPattern, 's');
-  const match = content.match(regex);
-  if (!match) return null;
-  return [
-    match.index! + range.beforeText.length,
-    match.index! + match[0].length - range.afterText.length
-  ];
-}
-
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-
-// Normalize all paths consistently
-function normalizePath(p: string): string {
-  return path.normalize(p).toLowerCase();
-}
-
-function expandHome(filepath: string): string {
-  if (filepath.startsWith('~/') || filepath === '~') {
-    return path.join(os.homedir(), filepath.slice(1));
-  }
-  return filepath;
-}
-
 // Store allowed directories in normalized form
 const allowedDirectories = args.map(dir => 
   normalizePath(path.resolve(expandHome(dir)))
@@ -97,138 +71,6 @@ await Promise.all(args.map(async (dir) => {
     process.exit(1);
   }
 }));
-
-// Security utilities
-async function validatePath(requestedPath: string): Promise<string> {
-  const expandedPath = expandHome(requestedPath);
-  const absolute = path.isAbsolute(expandedPath)
-    ? path.resolve(expandedPath)
-    : path.resolve(process.cwd(), expandedPath);
-    
-  const normalizedRequested = normalizePath(absolute);
-
-  // Check if path is within allowed directories
-  const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(dir));
-  if (!isAllowed) {
-    logger.error(`Access denied - path outside allowed directories: ${absolute} not in ${allowedDirectories.join(', ')}`); // Use logger
-    throw new Error(`Access denied - path outside allowed directories: ${absolute} not in ${allowedDirectories.join(', ')}`);
-  }
-
-  // Handle symlinks by checking their real path
-  try {
-    const realPath = await fs.realpath(absolute);
-    const normalizedReal = normalizePath(realPath);
-    const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(dir));
-    if (!isRealPathAllowed) {
-      logger.error("Access denied - symlink target outside allowed directories"); // Use logger
-      throw new Error("Access denied - symlink target outside allowed directories");
-    }
-    logger.info(`Validated path: ${realPath}`); // Use logger
-    return realPath;
-  } catch (error) {
-    // For new files that don't exist yet, verify parent directory
-    const parentDir = path.dirname(absolute);
-    try {
-      const realParentPath = await fs.realpath(parentDir);
-      const normalizedParent = normalizePath(realParentPath);
-      const isParentAllowed = allowedDirectories.some(dir => normalizedParent.startsWith(dir));
-      if (!isParentAllowed) {
-        logger.error("Access denied - parent directory outside allowed directories"); // Use logger
-        throw new Error("Access denied - parent directory outside allowed directories");
-      }
-      logger.info(`Validated parent directory: ${realParentPath}`); // Use logger
-      return absolute;
-    } catch {
-      logger.error(`Parent directory does not exist: ${parentDir}`); // Use logger
-      throw new Error(`Parent directory does not exist: ${parentDir}`);
-    }
-  }
-}
-
-// Schema definitions
-
-const TextRangeSchema = z.object({
-  beforeText: z.string().describe("Text that appears before the target range"),
-  afterText: z.string().describe("Text that appears after the target range")
-});
-
-const CopyToNewFileSchema = z.object({
-  sourcePath: z.string().describe("Path to the source file containing text to copy"),
-  range: TextRangeSchema,
-  targetPath: z.string().describe("Path where the new file will be created")
-});
-
-const CutToNewFileSchema = z.object({
-  sourcePath: z.string().describe("Path to the source file containing text to move"),
-  range: TextRangeSchema,
-  targetPath: z.string().describe("Path where the new file will be created")
-});
-
-const AppendToFileSchema = z.object({
-  sourcePath: z.string().describe("Path to the source file containing text to append"),
-  range: TextRangeSchema,
-  targetPath: z.string().describe("Path to the file where content will be appended")
-});
-
-const InsertAtPositionSchema = z.object({
-  path: z.string().describe("Path to the file where content will be inserted"),
-  position: TextRangeSchema,
-  content: z.string().describe("Text content to insert")
-});
-
-const DeleteRangeSchema = z.object({
-  path: z.string().describe("Path to the file where content will be deleted"),
-  range: TextRangeSchema
-});
-
-const ReplaceBlockSchema = z.object({
-  path: z.string().describe("Path to the file where content will be replaced"),
-  range: TextRangeSchema,
-  content: z.string().describe("New text content to replace the matched range")
-});
-
-const ReplaceByPatternSchema = z.object({
-  path: z.string().describe("Path to the file where content will be replaced"),
-  pattern: z.string().describe("Regular expression pattern to match"),
-  flags: z.string().optional().describe("Regular expression flags"),
-  replacement: z.string().describe("Replacement text (can include regex capture groups)")
-});
-
-
-const ReadFileArgsSchema = z.object({
-  path: z.string(),
-});
-
-const ReadMultipleFilesArgsSchema = z.object({
-  paths: z.array(z.string()),
-});
-
-const WriteFileArgsSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-});
-
-const CreateDirectoryArgsSchema = z.object({
-  path: z.string(),
-});
-
-const ListDirectoryArgsSchema = z.object({
-  path: z.string(),
-});
-
-const MoveFileArgsSchema = z.object({
-  source: z.string(),
-  destination: z.string(),
-});
-
-const SearchFilesArgsSchema = z.object({
-  path: z.string(),
-  pattern: z.string(),
-});
-
-const GetFileInfoArgsSchema = z.object({
-  path: z.string(),
-});
 
 const ToolInputSchema = ToolSchema.shape.inputSchema;
 type ToolInput = z.infer<typeof ToolInputSchema>;
@@ -255,21 +97,6 @@ const server = new Server(
     },
   },
 );
-
-// Tool implementations
-async function getFileStats(filePath: string): Promise<FileInfo> {
-  logger.info(`Getting file stats for: ${filePath}`); // Use logger
-  const stats = await fs.stat(filePath);
-  return {
-    size: stats.size,
-    created: stats.birthtime,
-    modified: stats.mtime,
-    accessed: stats.atime,
-    isDirectory: stats.isDirectory(),
-    isFile: stats.isFile(),
-    permissions: stats.mode.toString(8).slice(-3),
-  };
-}
 
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
