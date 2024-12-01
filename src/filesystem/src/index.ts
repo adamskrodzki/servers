@@ -21,9 +21,9 @@ import { toolDescriptions } from './tools/descriptions.js';
 import { normalizePath, expandHome } from "./utils.js";
 import { logger } from './logger.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { Server } from 'http';
 import path from 'path';
 import fs from "fs/promises";
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
 // Command line argument parsing
 const args = process.argv.slice(2);
