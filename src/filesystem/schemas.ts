@@ -60,6 +60,10 @@ export const WriteFileArgsSchema = z.object({
   content: z.string(),
 });
 
+export const WebSearchArgsSchema = z.object({
+  query: z.string(),
+});
+
 export const CreateDirectoryArgsSchema = z.object({
   path: z.string(),
 });
